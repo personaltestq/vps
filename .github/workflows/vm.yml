@@ -1,76 +1,77 @@
 name: Linux Desktop (Vinegar Studio)
+
 on:
-  workflow_dispatch: # Permite rodar manualmente pela aba Actions
+  workflow_dispatch:
 
 jobs:
   desktop:
     runs-on: ubuntu-latest
-    timeout-minutes: 350 # Seguro contra o limite de 6h do GitHub
+    timeout-minutes: 350
     steps:
       - name: Checkout (opcional)
         uses: actions/checkout@v4
 
-      - name: Instalar dependências do ambiente gráfico e Vinegar
+      - name: Corrigir mirror APT e instalar dependências
         run: |
+          # 1. Substitui o mirror da Azure pelo oficial da Canonical em todos os lugares
+          sudo sed -i -E 's@//azure\.archive\.ubuntu\.com@//archive.ubuntu.com@g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
+          
+          # 2. Garante que o apt use o novo mirror
           sudo apt-get update
-          # Pacotes essenciais: Xvfb, IceWM, VNC, noVNC, Mesa/llvmpipe, Flatpak
+          
+          # 3. Instala os pacotes essenciais
           sudo apt-get install -y \
             xvfb x11vnc icewm novnc websockify \
             mesa-utils libgl1-mesa-dri libglx-mesa0 \
-            flatpak dbus-x11 curl wget
+            flatpak dbus-x11 curl wget gnome-keyring
 
       - name: Configurar Flatpak e instalar Vinegar
         run: |
-          # Adiciona o repositório Flathub
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          # Instala o Vinegar (modo system para evitar problemas de permissão no runner)
           sudo flatpak install -y flathub org.vinegarhq.Vinegar
 
-      - name: Iniciar Xvfb, IceWM e VNC
+      - name: Iniciar Xvfb, IceWM, VNC e Cloudflare Tunnel
         run: |
-          # 1. Inicia o display virtual (Xvfb) na resolução desejada
-          Xvfb :1 -screen 0 1280x720x24 &
+          # 1. Inicia o display virtual
+          nohup Xvfb :1 -screen 0 1280x720x24 > /tmp/xvfb.log 2>&1 &
+          disown
           export DISPLAY=:1
           sleep 2
 
-          # 2. Inicia o gerenciador de janelas leve (IceWM)
-          icewm &
+          # 2. Inicia o gerenciador de janelas
+          nohup icewm > /tmp/icewm.log 2>&1 &
+          disown
           sleep 1
 
-          # 3. Inicia o servidor VNC espelhando o display :1
-          # -nopw: sem senha (o acesso será protegido pelo túnel do Cloudflare)
-          # -forever: não desliga após a primeira desconexão
-          x11vnc -display :1 -nopw -listen localhost -xkb -forever -shared -bg
+          # 3. Inicia o VNC (sem senha, protegido pelo túnel)
+          nohup x11vnc -display :1 -nopw -listen localhost -xkb -forever -shared -bg > /tmp/x11vnc.log 2>&1 &
+          disown
 
-          # 4. Inicia o noVNC (interface web para o VNC) na porta 6080
-          websockify --web=/usr/share/novnc/ 6080 localhost:5900 &
+          # 4. Inicia o noVNC na porta 6080
+          nohup websockify --web=/usr/share/novnc/ 6080 localhost:5900 > /tmp/websockify.log 2>&1 &
+          disown
 
-      - name: Iniciar Cloudflare Tunnel para acesso externo
-        run: |
-          # Baixa o binário do cloudflared
+          # 5. Baixa e inicia o Cloudflare Tunnel
           curl -L --output cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared
-
-          # Inicia o túnel apontando para a porta do noVNC (6080)
-          # O link público (https://....trycloudflare.com) aparecerá no log desta step
-          ./cloudflared tunnel --url http://localhost:6080 > /tmp/cloudflared.log 2>&1 &
+          nohup ./cloudflared tunnel --url http://localhost:6080 > /tmp/cloudflared.log 2>&1 &
+          disown
+          
           sleep 5
           echo "=== COPIE A URL ABAIXO ==="
-          cat /tmp/cloudflared.log | grep -o 'https://.*trycloudflare.com'
+          grep -o 'https://.*trycloudflare.com' /tmp/cloudflared.log || echo "Ainda não gerou a URL, aguarde..."
 
       - name: Iniciar Vinegar (Roblox Studio) com renderização por software
         run: |
-          # Garante que o llvmpipe seja usado para contornar a falta de GPU
-          export LIBGL_ALWAYS_SOFTWARE=1
           export DISPLAY=:1
-          
-          # O Vinegar precisa de uma sessão D-Bus para funcionar corretamente no Flatpak
-          # O comando abaixo inicia o Studio dentro de uma sessão D-Bus
-          dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio &
+          export LIBGL_ALWAYS_SOFTWARE=1
+          # Inicia o Vinegar em uma sessão D-Bus para o Flatpak funcionar bem
+          # O subcomando 'studio run' é o correto para abrir o Roblox Studio
+          nohup dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio run > /tmp/vinegar.log 2>&1 &
+          disown
+          echo "Vinegar iniciado. O log estará em /tmp/vinegar.log"
 
       - name: Manter o job ativo (aguardar interação)
         run: |
           echo "Ambiente no ar. Acesse a URL do Cloudflare acima."
-          echo "O job será encerrado automaticamente ao atingir o timeout de 350 minutos."
-          # Loop infinito para manter o runner vivo enquanto você usa o ambiente
           while true; do sleep 60; done
