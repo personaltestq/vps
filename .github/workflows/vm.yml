@@ -11,16 +11,25 @@ jobs:
       - name: Checkout (opcional)
         uses: actions/checkout@v4
 
-      - name: Corrigir mirror APT e instalar dependências
+      - name: Corrigir APT (Azure Bug) e instalar dependências mínimas
         run: |
-          # 1. Substitui o mirror da Azure pelo oficial da Canonical em todos os lugares
-          sudo sed -i -E 's@//azure\.archive\.ubuntu\.com@//archive.ubuntu.com@g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
+          echo "[+] Caçando o mirror da Azure em TODOS os arquivos do APT..."
+          # A correção exata que o pessoal do Reddit recomendou
+          grep -rl azure.archive.ubuntu.com /etc/apt | xargs -r sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g'
           
-          # 2. Garante que o apt use o novo mirror
-          sudo apt-get update
+          # Remove os repositórios da Microsoft que só atrasam a vida
+          sudo find /etc/apt/sources.list.d/ -name "*microsoft*" -exec mv {} {}.bak \; 2>/dev/null || true
+          sudo find /etc/apt/sources.list.d/ -name "*vscode*" -exec mv {} {}.bak \; 2>/dev/null || true
           
-          # 3. Instala os pacotes essenciais
-          sudo apt-get install -y \
+          echo "[+] Limpando cache velho..."
+          sudo rm -rf /var/lib/apt/lists/*
+          
+          echo "[+] Atualizando..."
+          sudo apt update
+          
+          echo "[+] Instalando pacotes (sem recomendações inúteis)..."
+          # --no-install-recommends evita puxar 100+ pacotes de fontes e áudio
+          sudo apt install -y --no-install-recommends \
             xvfb x11vnc icewm novnc websockify \
             mesa-utils libgl1-mesa-dri libglx-mesa0 \
             flatpak dbus-x11 curl wget gnome-keyring
@@ -32,26 +41,21 @@ jobs:
 
       - name: Iniciar Xvfb, IceWM, VNC e Cloudflare Tunnel
         run: |
-          # 1. Inicia o display virtual
           nohup Xvfb :1 -screen 0 1280x720x24 > /tmp/xvfb.log 2>&1 &
           disown
           export DISPLAY=:1
           sleep 2
 
-          # 2. Inicia o gerenciador de janelas
           nohup icewm > /tmp/icewm.log 2>&1 &
           disown
           sleep 1
 
-          # 3. Inicia o VNC (sem senha, protegido pelo túnel)
           nohup x11vnc -display :1 -nopw -listen localhost -xkb -forever -shared -bg > /tmp/x11vnc.log 2>&1 &
           disown
 
-          # 4. Inicia o noVNC na porta 6080
           nohup websockify --web=/usr/share/novnc/ 6080 localhost:5900 > /tmp/websockify.log 2>&1 &
           disown
 
-          # 5. Baixa e inicia o Cloudflare Tunnel
           curl -L --output cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared
           nohup ./cloudflared tunnel --url http://localhost:6080 > /tmp/cloudflared.log 2>&1 &
@@ -65,8 +69,6 @@ jobs:
         run: |
           export DISPLAY=:1
           export LIBGL_ALWAYS_SOFTWARE=1
-          # Inicia o Vinegar em uma sessão D-Bus para o Flatpak funcionar bem
-          # O subcomando 'studio run' é o correto para abrir o Roblox Studio
           nohup dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio run > /tmp/vinegar.log 2>&1 &
           disown
           echo "Vinegar iniciado. O log estará em /tmp/vinegar.log"
