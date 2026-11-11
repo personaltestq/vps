@@ -1,0 +1,76 @@
+name: Linux Desktop (Vinegar Studio)
+on:
+  workflow_dispatch: # Permite rodar manualmente pela aba Actions
+
+jobs:
+  desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350 # Seguro contra o limite de 6h do GitHub
+    steps:
+      - name: Checkout (opcional)
+        uses: actions/checkout@v4
+
+      - name: Instalar dependências do ambiente gráfico e Vinegar
+        run: |
+          sudo apt-get update
+          # Pacotes essenciais: Xvfb, IceWM, VNC, noVNC, Mesa/llvmpipe, Flatpak
+          sudo apt-get install -y \
+            xvfb x11vnc icewm novnc websockify \
+            mesa-utils libgl1-mesa-dri libglx-mesa0 \
+            flatpak dbus-x11 curl wget
+
+      - name: Configurar Flatpak e instalar Vinegar
+        run: |
+          # Adiciona o repositório Flathub
+          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          # Instala o Vinegar (modo system para evitar problemas de permissão no runner)
+          sudo flatpak install -y flathub org.vinegarhq.Vinegar
+
+      - name: Iniciar Xvfb, IceWM e VNC
+        run: |
+          # 1. Inicia o display virtual (Xvfb) na resolução desejada
+          Xvfb :1 -screen 0 1280x720x24 &
+          export DISPLAY=:1
+          sleep 2
+
+          # 2. Inicia o gerenciador de janelas leve (IceWM)
+          icewm &
+          sleep 1
+
+          # 3. Inicia o servidor VNC espelhando o display :1
+          # -nopw: sem senha (o acesso será protegido pelo túnel do Cloudflare)
+          # -forever: não desliga após a primeira desconexão
+          x11vnc -display :1 -nopw -listen localhost -xkb -forever -shared -bg
+
+          # 4. Inicia o noVNC (interface web para o VNC) na porta 6080
+          websockify --web=/usr/share/novnc/ 6080 localhost:5900 &
+
+      - name: Iniciar Cloudflare Tunnel para acesso externo
+        run: |
+          # Baixa o binário do cloudflared
+          curl -L --output cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+
+          # Inicia o túnel apontando para a porta do noVNC (6080)
+          # O link público (https://....trycloudflare.com) aparecerá no log desta step
+          ./cloudflared tunnel --url http://localhost:6080 > /tmp/cloudflared.log 2>&1 &
+          sleep 5
+          echo "=== COPIE A URL ABAIXO ==="
+          cat /tmp/cloudflared.log | grep -o 'https://.*trycloudflare.com'
+
+      - name: Iniciar Vinegar (Roblox Studio) com renderização por software
+        run: |
+          # Garante que o llvmpipe seja usado para contornar a falta de GPU
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export DISPLAY=:1
+          
+          # O Vinegar precisa de uma sessão D-Bus para funcionar corretamente no Flatpak
+          # O comando abaixo inicia o Studio dentro de uma sessão D-Bus
+          dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio &
+
+      - name: Manter o job ativo (aguardar interação)
+        run: |
+          echo "Ambiente no ar. Acesse a URL do Cloudflare acima."
+          echo "O job será encerrado automaticamente ao atingir o timeout de 350 minutos."
+          # Loop infinito para manter o runner vivo enquanto você usa o ambiente
+          while true; do sleep 60; done
