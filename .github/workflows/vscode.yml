@@ -36,6 +36,12 @@ jobs:
             https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i /tmp/cloudflared.deb
 
+      - name: Prepare workspace folder
+        run: |
+          mkdir -p /workspaces/vps
+          sudo chown -R runner:runner /workspaces/vps
+          chmod -R 777 /workspaces/vps
+
       - name: Start code-server + tunnel
         run: |
           # 1) sobe o code-server
