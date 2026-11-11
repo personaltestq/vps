@@ -38,7 +38,7 @@ jobs:
 
       - name: Prepare workspace folder
         run: |
-          mkdir -p /workspaces/vps
+          sudo mkdir -p /workspaces/vps
           sudo chown -R runner:runner /workspaces/vps
           chmod -R 777 /workspaces/vps
 
