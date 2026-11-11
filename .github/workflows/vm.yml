@@ -5,7 +5,7 @@ on:
 
 jobs:
   desktop:
-    runs-on: ubuntu-22.04 # 22.04 é essencial, a latest (26.04) não tem os pacotes
+    runs-on: ubuntu-22.04
     timeout-minutes: 350
     steps:
       - name: Checkout (opcional)
@@ -22,7 +22,7 @@ jobs:
           
           sudo sed -i 's/azure.archive.ubuntu.com/us.archive.ubuntu.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
           
-          # 2. Instalação dos pacotes (adicionado xterm)
+          # 2. Instalação dos pacotes essenciais
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             xvfb x11vnc icewm novnc websockify xterm \
@@ -34,26 +34,45 @@ jobs:
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install -y flathub org.vinegarhq.Vinegar
 
-      - name: Preparar ambiente gráfico e permissões
+      - name: Criar atalhos RobloxStudioInstaller e RobloxStudio
         run: |
-          # 1. Criar e dar permissão no runtime dir do D-Bus (Evita o erro dconf)
+          # Cria o atalho do Instalador
+          cat << 'EOF' | sudo tee /usr/local/bin/RobloxStudioInstaller > /dev/null
+#!/bin/bash
+export XDG_RUNTIME_DIR=/run/user/1001
+export DISPLAY=:1
+export LIBGL_ALWAYS_SOFTWARE=1
+exec dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio install
+EOF
+          sudo chmod +x /usr/local/bin/RobloxStudioInstaller
+
+          # Cria o atalho para Rodar o Jogo
+          cat << 'EOF' | sudo tee /usr/local/bin/RobloxStudio > /dev/null
+#!/bin/bash
+export XDG_RUNTIME_DIR=/run/user/1001
+export DISPLAY=:1
+export LIBGL_ALWAYS_SOFTWARE=1
+exec dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio run
+EOF
+          sudo chmod +x /usr/local/bin/RobloxStudio
+
+      - name: Preparar ambiente gráfico (Xvfb com GLX + Permissões)
+        run: |
+          # 1. Permissão no runtime dir do D-Bus
           sudo mkdir -p /run/user/1001
           sudo chown -R runner:runner /run/user/1001
           sudo chmod 700 /run/user/1001
-          export XDG_RUNTIME_DIR=/run/user/1001
 
-          # 2. Iniciar o Xvfb COM suporte a OpenGL (GLX). Sem isso, o Wine crasha.
+          # 2. Xvfb com OpenGL (GLX) forçado
           nohup Xvfb :1 -screen 0 1280x720x24 +extension GLX +render -noreset > /tmp/xvfb.log 2>&1 &
           disown
           export DISPLAY=:1
           sleep 2
 
-          # 3. Iniciar o IceWM
+          # 3. IceWM e VNC
           nohup icewm > /tmp/icewm.log 2>&1 &
           disown
           sleep 1
-
-          # 4. Iniciar o VNC e o noVNC
           nohup x11vnc -display :1 -nopw -listen localhost -xkb -forever -shared -bg > /tmp/x11vnc.log 2>&1 &
           disown
           nohup websockify --web=/usr/share/novnc/ 6080 localhost:5900 > /tmp/websockify.log 2>&1 &
@@ -70,25 +89,21 @@ jobs:
           echo "=== COPIE A URL ABAIXO ==="
           grep -o 'https://.*trycloudflare.com' /tmp/cloudflared.log || echo "Aguarde..."
 
-      - name: Dar permissão ao Flatpak e Iniciar Vinegar
+      - name: Aplicar Overrides e Abrir o Instalador
         run: |
-          # 1. Override do Flatpak (Libera tela, rede e passa o Display correto)
+          # Libera a sandbox do Flatpak
           flatpak override --user --socket=x11 --socket=fallback-x11 --share=network \
             --env=DISPLAY=:1 --env=LIBGL_ALWAYS_SOFTWARE=1 org.vinegarhq.Vinegar
 
-          export XDG_RUNTIME_DIR=/run/user/1001
-          export DISPLAY=:1
-          export LIBGL_ALWAYS_SOFTWARE=1
-          
-          # 2. Inicia o Vinegar usando dbus-run-session para não quebrar os portais do Flatpak
-          # O "studio install" vai abrir o instalador do Roblox na tela
-          nohup dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio install > /tmp/vinegar.log 2>&1 &
+          # Executa o atalho do instalador que acabamos de criar
+          nohup RobloxStudioInstaller > /tmp/vinegar.log 2>&1 &
           disown
           
-          echo "Vinegar iniciado. Acompanhe o log com: tail -f /tmp/vinegar.log"
+          echo "Instalador iniciado. O log estará em /tmp/vinegar.log"
 
       - name: Manter o job ativo (aguardar interação)
         run: |
           echo "Ambiente no ar. Acesse a URL do Cloudflare acima."
-          echo "O job será encerrado ao atingir o timeout de 350 minutos."
+          echo "Para instalar: use o atalho que já está aberto na tela."
+          echo "Para rodar depois de instalar: digite 'RobloxStudio' no terminal (xterm)."
           while true; do sleep 60; done
