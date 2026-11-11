@@ -36,24 +36,12 @@ jobs:
 
       - name: Criar atalhos RobloxStudioInstaller e RobloxStudio
         run: |
-          # Cria o atalho do Instalador
-          cat << 'EOF' | sudo tee /usr/local/bin/RobloxStudioInstaller > /dev/null
-#!/bin/bash
-export XDG_RUNTIME_DIR=/run/user/1001
-export DISPLAY=:1
-export LIBGL_ALWAYS_SOFTWARE=1
-exec dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio install
-EOF
+          # Cria o atalho do Instalador usando printf (evita erro de YAML)
+          printf '#!/bin/bash\nexport XDG_RUNTIME_DIR=/run/user/1001\nexport DISPLAY=:1\nexport LIBGL_ALWAYS_SOFTWARE=1\nexec dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio install\n' | sudo tee /usr/local/bin/RobloxStudioInstaller > /dev/null
           sudo chmod +x /usr/local/bin/RobloxStudioInstaller
 
           # Cria o atalho para Rodar o Jogo
-          cat << 'EOF' | sudo tee /usr/local/bin/RobloxStudio > /dev/null
-#!/bin/bash
-export XDG_RUNTIME_DIR=/run/user/1001
-export DISPLAY=:1
-export LIBGL_ALWAYS_SOFTWARE=1
-exec dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio run
-EOF
+          printf '#!/bin/bash\nexport XDG_RUNTIME_DIR=/run/user/1001\nexport DISPLAY=:1\nexport LIBGL_ALWAYS_SOFTWARE=1\nexec dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio run\n' | sudo tee /usr/local/bin/RobloxStudio > /dev/null
           sudo chmod +x /usr/local/bin/RobloxStudio
 
       - name: Preparar ambiente gráfico (Xvfb com GLX + Permissões)
