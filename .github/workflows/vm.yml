@@ -5,31 +5,28 @@ on:
 
 jobs:
   desktop:
-    runs-on: ubuntu-latest
+    # MUDANÇA AQUI: Força a versão 22.04 (estável) em vez da latest
+    runs-on: ubuntu-22.04 
     timeout-minutes: 350
     steps:
       - name: Checkout (opcional)
         uses: actions/checkout@v4
 
-      - name: Corrigir APT (Azure Bug) e instalar dependências mínimas
+      - name: Fixar DNS, corrigir mirror e instalar dependências
         run: |
-          echo "[+] Caçando o mirror da Azure em TODOS os arquivos do APT..."
-          # A correção exata que o pessoal do Reddit recomendou
-          grep -rl azure.archive.ubuntu.com /etc/apt | xargs -r sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g'
+          echo "[+] Fixando DNS do Google (a Azure está com o DNS cego)..."
+          sudo systemctl stop systemd-resolved || true
+          sudo rm -f /etc/resolv.conf
+          echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+          echo "nameserver 1.1.1.1" | sudo tee -a /etc/resolv.conf
+          sudo chattr +i /etc/resolv.conf
+
+          echo "[+] Trocando espelho da Azure pelo US Archive..."
+          sudo sed -i 's/azure.archive.ubuntu.com/us.archive.ubuntu.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
           
-          # Remove os repositórios da Microsoft que só atrasam a vida
-          sudo find /etc/apt/sources.list.d/ -name "*microsoft*" -exec mv {} {}.bak \; 2>/dev/null || true
-          sudo find /etc/apt/sources.list.d/ -name "*vscode*" -exec mv {} {}.bak \; 2>/dev/null || true
-          
-          echo "[+] Limpando cache velho..."
-          sudo rm -rf /var/lib/apt/lists/*
-          
-          echo "[+] Atualizando..."
-          sudo apt update
-          
-          echo "[+] Instalando pacotes (sem recomendações inúteis)..."
-          # --no-install-recommends evita puxar 100+ pacotes de fontes e áudio
-          sudo apt install -y --no-install-recommends \
+          echo "[+] Atualizando e instalando..."
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
             xvfb x11vnc icewm novnc websockify \
             mesa-utils libgl1-mesa-dri libglx-mesa0 \
             flatpak dbus-x11 curl wget gnome-keyring
