@@ -1,4 +1,4 @@
-name: Linux Desktop (Vinegar Studio - Headless Fix)
+name: Linux Desktop (Vinegar Studio)
 
 on:
   workflow_dispatch:
@@ -8,18 +8,24 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 350
     steps:
-      - name: Instalar dependências (APT, Xvfb, Openbox, GL libs)
+      - name: Checkout (opcional)
+        uses: actions/checkout@v4
+
+      - name: Corrigir APT e instalar ambiente mínimo (com GLX e xterm)
         run: |
+          # 1. Fix de DNS e mirror (evita o travamento de 0 B/s da Azure)
           sudo systemctl stop systemd-resolved || true
           sudo rm -f /etc/resolv.conf
           echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+          echo "nameserver 1.1.1.1" | sudo tee -a /etc/resolv.conf
           sudo chattr +i /etc/resolv.conf
-
+          
           sudo sed -i 's/azure.archive.ubuntu.com/us.archive.ubuntu.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
           
+          # 2. Instalação dos pacotes essenciais (ADICIONADO: openbox)
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb x11vnc openbox novnc websockify xterm \
+            xvfb x11vnc icewm novnc websockify xterm openbox \
             mesa-utils libgl1-mesa-dri libglx-mesa0 \
             flatpak dbus-x11 gnome-keyring curl wget
 
@@ -28,36 +34,37 @@ jobs:
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install -y flathub org.vinegarhq.Vinegar
 
-      - name: Criar atalhos e configurações (D3D11 + Patch de Shader)
+      - name: Criar atalhos RobloxStudioInstaller e RobloxStudio
         run: |
-          # 1. Cria os atalhos (mesmo código de antes)
-          printf '#!/bin/bash\nexport DISPLAY=:1\nexport LIBGL_ALWAYS_SOFTWARE=1\nexec dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio run\n' | sudo tee /usr/local/bin/RobloxStudio > /dev/null
+          # Cria o atalho do Instalador usando printf (evita erro de YAML)
+          printf '#!/bin/bash\nexport XDG_RUNTIME_DIR=/run/user/1001\nexport DISPLAY=:1\nexport LIBGL_ALWAYS_SOFTWARE=1\nexec dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio install\n' | sudo tee /usr/local/bin/RobloxStudioInstaller > /dev/null
+          sudo chmod +x /usr/local/bin/RobloxStudioInstaller
+
+          # Cria o atalho para Rodar o Jogo
+          printf '#!/bin/bash\nexport XDG_RUNTIME_DIR=/run/user/1001\nexport DISPLAY=:1\nexport LIBGL_ALWAYS_SOFTWARE=1\nexec dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio run\n' | sudo tee /usr/local/bin/RobloxStudio > /dev/null
           sudo chmod +x /usr/local/bin/RobloxStudio
 
-          # 2. Força o renderizador D3D11 no Vinegar
+          # ADICIONADO: Força o renderizador D3D11 no Vinegar (resolve o erro do GLX)
           mkdir -p ~/.var/app/org.vinegarhq.Vinegar/config/vinegar/
           printf '[studio]\nrenderer = "D3D11"\n' > ~/.var/app/org.vinegarhq.Vinegar/config/vinegar/config.toml
 
-          # 3. Prepara o patch de shader (será aplicado na primeira execução do Studio)
-          # O ideal é que o Studio já esteja baixado, mas o overlay pode ser usado depois.
-          echo "Configuração do Vinegar concluída."
-
-      - name: Iniciar Xvfb (com GLX) e Openbox
+      - name: Preparar ambiente gráfico (Xvfb com GLX + Permissões)
         run: |
-          export XDG_RUNTIME_DIR=/run/user/1001
+          # 1. Permissão no runtime dir do D-Bus
           sudo mkdir -p /run/user/1001
           sudo chown -R runner:runner /run/user/1001
           sudo chmod 700 /run/user/1001
 
+          # 2. Xvfb com OpenGL (GLX) forçado
           nohup Xvfb :1 -screen 0 1280x720x24 +extension GLX +render -noreset > /tmp/xvfb.log 2>&1 &
           disown
-          sleep 2
           export DISPLAY=:1
-          
+          sleep 2
+
+          # 3. ALTERADO AQUI: Usando openbox em vez de icewm para suportar diálogos
           nohup openbox > /tmp/openbox.log 2>&1 &
           disown
           sleep 1
-
           nohup x11vnc -display :1 -nopw -listen localhost -xkb -forever -shared -bg > /tmp/x11vnc.log 2>&1 &
           disown
           nohup websockify --web=/usr/share/novnc/ 6080 localhost:5900 > /tmp/websockify.log 2>&1 &
@@ -69,26 +76,26 @@ jobs:
           chmod +x cloudflared
           nohup ./cloudflared tunnel --url http://localhost:6080 > /tmp/cloudflared.log 2>&1 &
           disown
+          
           sleep 5
           echo "=== COPIE A URL ABAIXO ==="
           grep -o 'https://.*trycloudflare.com' /tmp/cloudflared.log || echo "Aguarde..."
 
-      - name: Aplicar Override no Flatpak e Iniciar Instalador
+      - name: Aplicar Overrides e Abrir o Instalador
         run: |
+          # Libera a sandbox do Flatpak
           flatpak override --user --socket=x11 --socket=fallback-x11 --share=network \
             --env=DISPLAY=:1 --env=LIBGL_ALWAYS_SOFTWARE=1 org.vinegarhq.Vinegar
 
-          export XDG_RUNTIME_DIR=/run/user/1001
-          export DISPLAY=:1
-          export LIBGL_ALWAYS_SOFTWARE=1
-          
-          # Executa o instalador (que já usará a config D3D11)
-          nohup dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio install > /tmp/vinegar_install.log 2>&1 &
+          # Executa o atalho do instalador que acabamos de criar
+          nohup RobloxStudioInstaller > /tmp/vinegar.log 2>&1 &
           disown
           
-          echo "Instalador iniciado. Verifique o log em /tmp/vinegar_install.log"
+          echo "Instalador iniciado. O log estará em /tmp/vinegar.log"
 
-      - name: Manter o job ativo
+      - name: Manter o job ativo (aguardar interação)
         run: |
-          echo "Ambiente no ar. Acesse a URL do Cloudflare."
+          echo "Ambiente no ar. Acesse a URL do Cloudflare acima."
+          echo "Para instalar: use o atalho que já está aberto na tela."
+          echo "Para rodar depois de instalar: digite 'RobloxStudio' no terminal (xterm)."
           while true; do sleep 60; done
