@@ -1,63 +1,38 @@
-name: Windows Desktop (Native VNC)
+name: WINDOWS RDP - CLOUDFLARE
 
 on:
   workflow_dispatch:
-    inputs:
-      password:
-        description: 'Senha do VNC'
-        required: true
-        default: 'changeme123'
 
 jobs:
-  windows-desktop:
-    runs-on: windows-2022
+  build:
+    runs-on: windows-latest
     timeout-minutes: 350
+
     steps:
-      - name: Instalar TightVNC e Cloudflared
-        shell: powershell
-        run: |
-          # Instala o VNC via Chocolatey (já vem no runner do Windows)
-          choco install tightvnc -y --no-progress
-          
-          # Baixa o Cloudflared para Windows
-          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+      - name: Setup Cloudflared
+        uses: AnimMouse/setup-cloudflared@v2
 
-      - name: Configurar senha do VNC
-        shell: powershell
+      - name: Enable Windows RDP
         run: |
-          # A senha do TightVNC precisa ser criptografada. Vamos usar um comando nativo.
-          $pass = "${{ inputs.password }}"
-          # Define a senha no registro do Windows
-          Set-ItemProperty -Path "HKLM:\SOFTWARE\TightVNC\Server" -Name "Password" -Value $pass
-          Set-ItemProperty -Path "HKLM:\SOFTWARE\TightVNC\Server" -Name "RfbPort" -Value 5900
-          
-      - name: Iniciar VNC e Túnel
-        shell: powershell
-        run: |
-          # Inicia o servidor VNC em background
-          Start-Process -FilePath "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run"
-          Start-Sleep -Seconds 3
-          
-          # Inicia o Cloudflared em background
-          Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:5900" -RedirectStandardError "cloudflared_log.txt"
-          Start-Sleep -Seconds 10
-          
-          # Extrai a URL do log e joga no summary
-          $log = Get-Content "cloudflared_log.txt" -Raw
-          if ($log -match 'https://[a-z0-9-]+\.trycloudflare\.com') {
-              $url = $matches[0]
-              echo "### ✅ Windows Desktop Online" >> $env:GITHUB_STEP_SUMMARY
-              echo "🔗 **URL (use um cliente VNC como RealVNC/TigerVNC):** $url" >> $env:GITHUB_STEP_SUMMARY
-              echo "🔑 **Senha:** ${{ inputs.password }}" >> $env:GITHUB_STEP_SUMMARY
-              echo "URL: $url"
-          } else {
-              echo "Erro ao gerar URL. Log:" 
-              cat cloudflared_log.txt
-              exit 1
-          }
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+          Write-Host "✅ RDP Enabled Successfully!"
 
-      - name: Manter o Job Vivo
-        shell: powershell
+      - name: Set Administrator Password
         run: |
-          echo "Ambiente online. Aguardando o timeout."
+          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force)
+          Write-Host "✅ Password Configured!"
+
+      - name: Start Cloudflare Tunnel
+        run: |
+          Start-Process PowerShell -ArgumentList '-NoExit -Command "cloudflared tunnel --url tcp://localhost:3389"'
+          Start-Sleep -Seconds 15
+          Write-Host "✅ TUNNEL STARTED! Check the log for the URL below."
+          Write-Host " USERNAME: runneradmin"
+          Write-Host " PASSWORD: P@ssw0rd123!"
+
+      - name: Keep Session Alive
+        run: |
+          Write-Host "⏳ Session Active - Keeping alive..."
           while ($true) { Start-Sleep -Seconds 60 }
