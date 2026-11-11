@@ -5,7 +5,7 @@ on:
 
 jobs:
   rdp-session:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 350
 
     steps:
@@ -32,7 +32,7 @@ jobs:
           Start-Process -FilePath ".\tailscale-setup.exe" -ArgumentList "/S" -Wait
           
           # --- COLE A SUA AUTH KEY AQUI ---
-          $authKey = "tskey-auth-kAxWrTxUCn11CNTRL-oViC2Dov2o6gnM8zgQSpo66bW8pQto4Ae"
+          $authKey = "tskey-auth-kft55jXnD721CNTRL-YwBtB11y7qNdjFUuCY5zqNKy3nbZ9mXy"
           
           # Autentica usando a chave que você colocou acima
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$authKey --hostname=github-runner-$env:GITHUB_RUN_ID
