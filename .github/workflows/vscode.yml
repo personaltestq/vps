@@ -1,94 +1,63 @@
-name: VS Code Server (temporary)
+name: Windows Desktop (Native VNC)
 
 on:
   workflow_dispatch:
     inputs:
       password:
-        description: 'Senha do VS Code'
+        description: 'Senha do VNC'
         required: true
         default: 'changeme123'
 
-permissions:
-  contents: read
-
 jobs:
-  vscode:
+  windows-desktop:
     runs-on: windows-2022
-    timeout-minutes: 350   # 5h50 — margem pra não ser morto pelo teto de 6h
+    timeout-minutes: 350
     steps:
-      - name: Install code-server
+      - name: Instalar TightVNC e Cloudflared
+        shell: powershell
         run: |
-          curl -fsSL https://code-server.dev/install.sh | sh
+          # Instala o VNC via Chocolatey (já vem no runner do Windows)
+          choco install tightvnc -y --no-progress
+          
+          # Baixa o Cloudflared para Windows
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
 
-      - name: Configure code-server
+      - name: Configurar senha do VNC
+        shell: powershell
         run: |
-          mkdir -p ~/.config/code-server
-          cat > ~/.config/code-server/config.yaml <<EOF
-          bind-addr: 127.0.0.1:8080
-          auth: password
-          password: ${{ inputs.password }}
-          cert: false
-          EOF
-
-      - name: Install cloudflared
+          # A senha do TightVNC precisa ser criptografada. Vamos usar um comando nativo.
+          $pass = "${{ inputs.password }}"
+          # Define a senha no registro do Windows
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\TightVNC\Server" -Name "Password" -Value $pass
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\TightVNC\Server" -Name "RfbPort" -Value 5900
+          
+      - name: Iniciar VNC e Túnel
+        shell: powershell
         run: |
-          curl -L --output /tmp/cloudflared.deb \
-            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i /tmp/cloudflared.deb
+          # Inicia o servidor VNC em background
+          Start-Process -FilePath "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run"
+          Start-Sleep -Seconds 3
+          
+          # Inicia o Cloudflared em background
+          Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:5900" -RedirectStandardError "cloudflared_log.txt"
+          Start-Sleep -Seconds 10
+          
+          # Extrai a URL do log e joga no summary
+          $log = Get-Content "cloudflared_log.txt" -Raw
+          if ($log -match 'https://[a-z0-9-]+\.trycloudflare\.com') {
+              $url = $matches[0]
+              echo "### ✅ Windows Desktop Online" >> $env:GITHUB_STEP_SUMMARY
+              echo "🔗 **URL (use um cliente VNC como RealVNC/TigerVNC):** $url" >> $env:GITHUB_STEP_SUMMARY
+              echo "🔑 **Senha:** ${{ inputs.password }}" >> $env:GITHUB_STEP_SUMMARY
+              echo "URL: $url"
+          } else {
+              echo "Erro ao gerar URL. Log:" 
+              cat cloudflared_log.txt
+              exit 1
+          }
 
-      - name: Prepare workspace folder
+      - name: Manter o Job Vivo
+        shell: powershell
         run: |
-          sudo mkdir -p /workspaces/vps
-          sudo chown -R runner:runner /workspaces/vps
-          chmod -R 777 /workspaces/vps
-
-      - name: Start code-server + tunnel
-        run: |
-          # 1) sobe o code-server
-          code-server > /tmp/code-server.log 2>&1 &
-          CS_PID=$!
-          sleep 5
-          if ! kill -0 $CS_PID 2>/dev/null; then
-            echo "❌ code-server não subiu"
-            cat /tmp/code-server.log
-            exit 1
-          fi
-
-          # 2) sobe o quick tunnel
-          cloudflared tunnel --url http://localhost:8080 > /tmp/cloudflared.log 2>&1 &
-          CF_PID=$!
-
-          # 3) espera a URL aparecer no log
-          URL=""
-          for i in $(seq 1 30); do
-            URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log | head -1)
-            [ -n "$URL" ] && break
-            sleep 2
-          done
-          if [ -z "$URL" ]; then
-            echo "❌ tunnel não subiu"
-            cat /tmp/cloudflared.log
-            exit 1
-          fi
-
-          # 4) publica no summary da run
-          {
-            echo "### ✅ VS Code Server online"
-            echo ""
-            echo "🔗 **URL**: $URL"
-            echo ""
-            echo "🔑 **Senha**: \`${{ inputs.password }}\`"
-            echo ""
-            echo "⏱️ **Teto**: ~5h50 (timeout do job)"
-            echo ""
-            echo "⚠️ Tudo em \`~\` morre quando o job terminar."
-          } >> $GITHUB_STEP_SUMMARY
-
-          echo "URL:  $URL"
-          echo "Senha: ${{ inputs.password }}"
-
-          # 5) mantém o job vivo e monitora os dois processos
-          while kill -0 $CS_PID 2>/dev/null && kill -0 $CF_PID 2>/dev/null; do
-            sleep 30
-          done
-          echo "⚠️ algum processo caiu — encerrando"
+          echo "Ambiente online. Aguardando o timeout."
+          while ($true) { Start-Sleep -Seconds 60 }
