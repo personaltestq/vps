@@ -29,7 +29,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             xvfb x11vnc icewm novnc websockify \
             mesa-utils libgl1-mesa-dri libglx-mesa0 \
-            flatpak dbus-x11 curl wget gnome-keyring
+            flatpak dbus-x11 curl wget gnome-keyring \
+            xterm xfce4-terminal
 
       - name: Configurar Flatpak e instalar Vinegar
         run: |
