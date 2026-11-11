@@ -5,55 +5,62 @@ on:
 
 jobs:
   desktop:
-    # MUDANÇA AQUI: Força a versão 22.04 (estável) em vez da latest
-    runs-on: ubuntu-22.04 
+    runs-on: ubuntu-22.04 # 22.04 é essencial, a latest (26.04) não tem os pacotes
     timeout-minutes: 350
     steps:
       - name: Checkout (opcional)
         uses: actions/checkout@v4
 
-      - name: Fixar DNS, corrigir mirror e instalar dependências
+      - name: Corrigir APT e instalar ambiente mínimo (com GLX e xterm)
         run: |
-          echo "[+] Fixando DNS do Google (a Azure está com o DNS cego)..."
+          # 1. Fix de DNS e mirror (evita o travamento de 0 B/s da Azure)
           sudo systemctl stop systemd-resolved || true
           sudo rm -f /etc/resolv.conf
           echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
           echo "nameserver 1.1.1.1" | sudo tee -a /etc/resolv.conf
           sudo chattr +i /etc/resolv.conf
-
-          echo "[+] Trocando espelho da Azure pelo US Archive..."
+          
           sudo sed -i 's/azure.archive.ubuntu.com/us.archive.ubuntu.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
           
-          echo "[+] Atualizando e instalando..."
+          # 2. Instalação dos pacotes (adicionado xterm)
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb x11vnc icewm novnc websockify \
+            xvfb x11vnc icewm novnc websockify xterm \
             mesa-utils libgl1-mesa-dri libglx-mesa0 \
-            flatpak dbus-x11 curl wget gnome-keyring \
-            xterm xfce4-terminal
+            flatpak dbus-x11 gnome-keyring curl wget
 
       - name: Configurar Flatpak e instalar Vinegar
         run: |
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install -y flathub org.vinegarhq.Vinegar
 
-      - name: Iniciar Xvfb, IceWM, VNC e Cloudflare Tunnel
+      - name: Preparar ambiente gráfico e permissões
         run: |
-          nohup Xvfb :1 -screen 0 1280x720x24 > /tmp/xvfb.log 2>&1 &
+          # 1. Criar e dar permissão no runtime dir do D-Bus (Evita o erro dconf)
+          sudo mkdir -p /run/user/1001
+          sudo chown -R runner:runner /run/user/1001
+          sudo chmod 700 /run/user/1001
+          export XDG_RUNTIME_DIR=/run/user/1001
+
+          # 2. Iniciar o Xvfb COM suporte a OpenGL (GLX). Sem isso, o Wine crasha.
+          nohup Xvfb :1 -screen 0 1280x720x24 +extension GLX +render -noreset > /tmp/xvfb.log 2>&1 &
           disown
           export DISPLAY=:1
           sleep 2
 
+          # 3. Iniciar o IceWM
           nohup icewm > /tmp/icewm.log 2>&1 &
           disown
           sleep 1
 
+          # 4. Iniciar o VNC e o noVNC
           nohup x11vnc -display :1 -nopw -listen localhost -xkb -forever -shared -bg > /tmp/x11vnc.log 2>&1 &
           disown
-
           nohup websockify --web=/usr/share/novnc/ 6080 localhost:5900 > /tmp/websockify.log 2>&1 &
           disown
 
+      - name: Iniciar Cloudflare Tunnel
+        run: |
           curl -L --output cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared
           nohup ./cloudflared tunnel --url http://localhost:6080 > /tmp/cloudflared.log 2>&1 &
@@ -61,17 +68,27 @@ jobs:
           
           sleep 5
           echo "=== COPIE A URL ABAIXO ==="
-          grep -o 'https://.*trycloudflare.com' /tmp/cloudflared.log || echo "Ainda não gerou a URL, aguarde..."
+          grep -o 'https://.*trycloudflare.com' /tmp/cloudflared.log || echo "Aguarde..."
 
-      - name: Iniciar Vinegar (Roblox Studio) com renderização por software
+      - name: Dar permissão ao Flatpak e Iniciar Vinegar
         run: |
+          # 1. Override do Flatpak (Libera tela, rede e passa o Display correto)
+          flatpak override --user --socket=x11 --socket=fallback-x11 --share=network \
+            --env=DISPLAY=:1 --env=LIBGL_ALWAYS_SOFTWARE=1 org.vinegarhq.Vinegar
+
+          export XDG_RUNTIME_DIR=/run/user/1001
           export DISPLAY=:1
           export LIBGL_ALWAYS_SOFTWARE=1
-          nohup dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio run > /tmp/vinegar.log 2>&1 &
+          
+          # 2. Inicia o Vinegar usando dbus-run-session para não quebrar os portais do Flatpak
+          # O "studio install" vai abrir o instalador do Roblox na tela
+          nohup dbus-run-session -- flatpak run org.vinegarhq.Vinegar studio install > /tmp/vinegar.log 2>&1 &
           disown
-          echo "Vinegar iniciado. O log estará em /tmp/vinegar.log"
+          
+          echo "Vinegar iniciado. Acompanhe o log com: tail -f /tmp/vinegar.log"
 
       - name: Manter o job ativo (aguardar interação)
         run: |
           echo "Ambiente no ar. Acesse a URL do Cloudflare acima."
+          echo "O job será encerrado ao atingir o timeout de 350 minutos."
           while true; do sleep 60; done
