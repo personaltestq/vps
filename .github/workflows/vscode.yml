@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   vscode:
-    runs-on: ubuntu-latest
+    runs-on: windows-2022
     timeout-minutes: 350   # 5h50 — margem pra não ser morto pelo teto de 6h
     steps:
       - name: Install code-server
