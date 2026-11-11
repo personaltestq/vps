@@ -26,11 +26,31 @@ jobs:
 
       - name: Start Cloudflare Tunnel
         run: |
-          Start-Process PowerShell -ArgumentList '-NoExit -Command "cloudflared tunnel --url tcp://localhost:3389"'
-          Start-Sleep -Seconds 15
-          Write-Host "✅ TUNNEL STARTED! Check the log for the URL below."
-          Write-Host " USERNAME: runneradmin"
-          Write-Host " PASSWORD: P@ssw0rd123!"
+          # Roda o cloudflared em background e salva o log num arquivo
+          Start-Process -FilePath "cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:3389" -RedirectStandardError "tunnel.log" -NoNewWindow
+          
+          # Espera 10 segundos pro túnel gerar a URL
+          Start-Sleep -Seconds 10
+          
+          # Procura a URL no log
+          $log = Get-Content "tunnel.log" -Raw
+          if ($log -match 'https://[a-z0-9-]+\.trycloudflare\.com') {
+              $url = $matches[0]
+              Write-Host "✅ TUNNEL STARTED!"
+              Write-Host "URL: $url"
+              Write-Host "USERNAME: runneradmin"
+              Write-Host "PASSWORD: P@ssw0rd123!"
+              
+              # Joga no resumo do job para ficar fácil de achar
+              echo "### ✅ Windows RDP Online" >> $env:GITHUB_STEP_SUMMARY
+              echo "🔗 **Hostname do Túnel:** $url" >> $env:GITHUB_STEP_SUMMARY
+              echo "👤 **Usuário:** runneradmin" >> $env:GITHUB_STEP_SUMMARY
+              echo "🔑 **Senha:** P@ssw0rd123!" >> $env:GITHUB_STEP_SUMMARY
+          } else {
+              Write-Host "❌ Erro ao gerar o túnel:"
+              Get-Content "tunnel.log"
+              exit 1
+          }
 
       - name: Keep Session Alive
         run: |
