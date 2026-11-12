@@ -32,7 +32,7 @@ jobs:
           Start-Process -FilePath ".\tailscale-setup.exe" -ArgumentList "/S" -Wait
           
           # --- COLE A SUA AUTH KEY AQUI ---
-          $authKey = "tskey-auth-kft55jXnD721CNTRL-YwBtB11y7qNdjFUuCY5zqNKy3nbZ9mXy"
+          $authKey = "tskey-auth-kAnkkxKy8521CNTRL-ou6CMH4oaU4eRWEzZgJNV4kkwezMK4kTU"
           
           # Autentica usando a chave que você colocou acima
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$authKey --hostname=github-runner-$env:GITHUB_RUN_ID
