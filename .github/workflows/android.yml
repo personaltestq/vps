@@ -30,7 +30,7 @@ jobs:
           echo "VNC_PASS=$VNC_PASS" >> "$GITHUB_ENV"
 
           # Display do mesmo tamanho da janela do scrcpy (sem bordas pretas)
-          Xvfb :99 -screen 0 540x960x24 &
+          Xvfb :99 -screen 0 720x1280x24 &
           sleep 3
           x11vnc -display :99 -forever -shared -passwd "$VNC_PASS" -localhost -rfbport 5900 -bg -quiet
           websockify --web=/usr/share/novnc 6080 localhost:5900 > /tmp/novnc.log 2>&1 &
@@ -68,15 +68,19 @@ jobs:
           cat > /tmp/keepalive.sh <<'EOF'
           #!/usr/bin/env bash
           adb shell getprop ro.build.version.release
-          adb shell getprop ro.product.cpu.abilist
+          echo "ABIs: $(adb shell getprop ro.product.cpu.abilist)"
 
-          # Espelha a tela do celular, sem bordas, preenchendo o display 540x960
-          SDL_RENDER_DRIVER=software nohup scrcpy \
-            --max-size 960 \
-            --window-borderless \
-            --window-x 0 --window-y 0 \
-            --window-width 540 --window-height 960 \
-            > /tmp/scrcpy.log 2>&1 &
+          start_scrcpy() {
+            SDL_RENDER_DRIVER=software nohup scrcpy \
+              --no-audio \
+              --max-size 1280 \
+              --window-borderless \
+              --window-x 0 --window-y 0 \
+              --window-width 720 --window-height 1280 \
+              > /tmp/scrcpy.log 2>&1 &
+          }
+
+          start_scrcpy
           sleep 8
           cat /tmp/scrcpy.log
 
@@ -84,11 +88,7 @@ jobs:
           echo "Emulador no ar até $(date -d @$DEADLINE)"
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
             # reabre o scrcpy se ele cair
-            pgrep -x scrcpy > /dev/null || {
-              SDL_RENDER_DRIVER=software nohup scrcpy --max-size 960 --window-borderless \
-                --window-x 0 --window-y 0 --window-width 540 --window-height 960 \
-                > /tmp/scrcpy.log 2>&1 &
-            }
+            pgrep -x scrcpy > /dev/null || start_scrcpy
             sleep 30
           done
           echo "Tempo esgotado, encerrando."
@@ -98,7 +98,7 @@ jobs:
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 33
-          target: google_apis
+          target: google_apis_playstore
           arch: x86_64
           cores: 4
           ram-size: 4096M
