@@ -62,6 +62,20 @@ jobs:
             echo "Senha: \`$VNC_PASS\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Criar script keep-alive
+        run: |
+          cat > /tmp/keepalive.sh <<'EOF'
+          #!/usr/bin/env bash
+          adb shell getprop ro.build.version.release
+          DEADLINE=$(( START_TS + 355*60 ))
+          echo "Emulador no ar até $(date -d @$DEADLINE)"
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            sleep 60
+          done
+          echo "Tempo esgotado, encerrando."
+          EOF
+          chmod +x /tmp/keepalive.sh
+
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29
@@ -69,13 +83,5 @@ jobs:
           arch: x86_64
           force-avd-creation: false
           disable-animations: false
-          emulator-options: -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -memory 3072
-          script: |
-            adb shell getprop ro.build.version.release
-
-            # Mantém no ar até 5h55 desde o início do job (limite do GitHub é 6h)
-            DEADLINE=$(( START_TS + 355*60 ))
-            echo "Emulador no ar até $(date -d @$DEADLINE)"
-            while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-              sleep 60
-            done
+          emulator-options: -no-snapshot -noaudio -no-boot-anim -no-metrics -gpu swiftshader_indirect -memory 3072
+          script: bash /tmp/keepalive.sh
