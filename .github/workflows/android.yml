@@ -1,4 +1,4 @@
-name: Android 10 via VNC
+name: Android ARM via VNC
 
 on:
   workflow_dispatch:
@@ -19,17 +19,18 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Instalar Xvfb, VNC e noVNC
+      - name: Instalar Xvfb, VNC, noVNC e scrcpy
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb x11vnc novnc websockify libpulse0 libxkbfile1 libxcb-xinerama0
+          sudo apt-get install -y xvfb x11vnc novnc websockify scrcpy libpulse0 libxkbfile1 libxcb-xinerama0
 
       - name: Subir display virtual + VNC + noVNC
         run: |
           VNC_PASS=$(openssl rand -hex 6)
           echo "VNC_PASS=$VNC_PASS" >> "$GITHUB_ENV"
 
-          Xvfb :99 -screen 0 1280x1024x24 &
+          # Display do mesmo tamanho da janela do scrcpy (sem bordas pretas)
+          Xvfb :99 -screen 0 540x960x24 &
           sleep 3
           x11vnc -display :99 -forever -shared -passwd "$VNC_PASS" -localhost -rfbport 5900 -bg -quiet
           websockify --web=/usr/share/novnc 6080 localhost:5900 > /tmp/novnc.log 2>&1 &
@@ -56,7 +57,7 @@ jobs:
           echo "SENHA: $VNC_PASS"
           echo "=============================================="
           {
-            echo "### Acesso ao Android 10"
+            echo "### Acesso ao Android"
             echo "URL direta: $FULL"
             echo ""
             echo "Senha: \`$VNC_PASS\`"
@@ -67,10 +68,28 @@ jobs:
           cat > /tmp/keepalive.sh <<'EOF'
           #!/usr/bin/env bash
           adb shell getprop ro.build.version.release
+          adb shell getprop ro.product.cpu.abilist
+
+          # Espelha a tela do celular, sem bordas, preenchendo o display 540x960
+          SDL_RENDER_DRIVER=software nohup scrcpy \
+            --max-size 960 \
+            --window-borderless \
+            --window-x 0 --window-y 0 \
+            --window-width 540 --window-height 960 \
+            > /tmp/scrcpy.log 2>&1 &
+          sleep 8
+          cat /tmp/scrcpy.log
+
           DEADLINE=$(( START_TS + 355*60 ))
           echo "Emulador no ar até $(date -d @$DEADLINE)"
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-            sleep 60
+            # reabre o scrcpy se ele cair
+            pgrep -x scrcpy > /dev/null || {
+              SDL_RENDER_DRIVER=software nohup scrcpy --max-size 960 --window-borderless \
+                --window-x 0 --window-y 0 --window-width 540 --window-height 960 \
+                > /tmp/scrcpy.log 2>&1 &
+            }
+            sleep 30
           done
           echo "Tempo esgotado, encerrando."
           EOF
@@ -78,10 +97,12 @@ jobs:
 
       - uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 29
+          api-level: 33
           target: google_apis
           arch: x86_64
+          cores: 4
+          ram-size: 4096M
           force-avd-creation: false
-          disable-animations: false
-          emulator-options: -no-snapshot -noaudio -no-boot-anim -no-metrics -gpu swiftshader_indirect -memory 3072
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -no-metrics -skin 720x1280 -gpu swiftshader_indirect
           script: bash /tmp/keepalive.sh
