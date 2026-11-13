@@ -1,0 +1,73 @@
+name: Android 10 via VNC
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Quanto tempo manter o emulador no ar"
+        default: "60"
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      DISPLAY: ":99"
+    steps:
+      - name: Habilitar KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Instalar Xvfb, VNC e noVNC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb x11vnc novnc websockify libpulse0 libxkbfile1 libxcb-xinerama0
+
+      - name: Subir display virtual + VNC + noVNC
+        run: |
+          VNC_PASS=$(openssl rand -hex 6)
+          echo "VNC_PASS=$VNC_PASS" >> "$GITHUB_ENV"
+
+          Xvfb :99 -screen 0 1280x1024x24 &
+          sleep 3
+          x11vnc -display :99 -forever -shared -passwd "$VNC_PASS" -localhost -rfbport 5900 -bg -quiet
+          websockify --web=/usr/share/novnc 6080 localhost:5900 > /tmp/novnc.log 2>&1 &
+          sleep 2
+
+      - name: Subir cloudflared (quick tunnel)
+        run: |
+          curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          ./cloudflared tunnel --url http://localhost:6080 --no-autoupdate > /tmp/cf.log 2>&1 &
+
+          for i in $(seq 1 30); do
+            URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cf.log | head -n1 || true)
+            [ -n "$URL" ] && break
+            sleep 2
+          done
+
+          echo "=============================================="
+          echo "URL:   $URL/vnc.html?autoconnect=1&resize=scale"
+          echo "SENHA: $VNC_PASS"
+          echo "=============================================="
+          {
+            echo "### Acesso ao Android 10"
+            echo "URL: $URL/vnc.html?autoconnect=1&resize=scale"
+            echo "Senha: \`$VNC_PASS\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: false
+          disable-animations: false
+          # sem -no-window, para o emulador aparecer no display :99
+          emulator-options: -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -memory 3072
+          script: |
+            adb shell getprop ro.build.version.release
+            echo "Emulador no ar por ${{ inputs.minutes }} minutos"
+            sleep $(( ${{ inputs.minutes }} * 60 ))
