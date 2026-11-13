@@ -2,18 +2,17 @@ name: Android 10 via VNC
 
 on:
   workflow_dispatch:
-    inputs:
-      minutes:
-        description: "Quanto tempo manter o emulador no ar"
-        default: "60"
 
 jobs:
   android:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 360
     env:
       DISPLAY: ":99"
     steps:
+      - name: Marcar horário de início
+        run: echo "START_TS=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Habilitar KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -36,25 +35,30 @@ jobs:
           websockify --web=/usr/share/novnc 6080 localhost:5900 > /tmp/novnc.log 2>&1 &
           sleep 2
 
-      - name: Subir cloudflared (quick tunnel)
+      - name: Subir cloudflared (quick tunnel) e logar acesso
         run: |
           curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared
           ./cloudflared tunnel --url http://localhost:6080 --no-autoupdate > /tmp/cf.log 2>&1 &
 
+          URL=""
           for i in $(seq 1 30); do
             URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cf.log | head -n1 || true)
             [ -n "$URL" ] && break
             sleep 2
           done
 
+          FULL="$URL/vnc.html?autoconnect=1&resize=scale&password=$VNC_PASS"
+
           echo "=============================================="
-          echo "URL:   $URL/vnc.html?autoconnect=1&resize=scale"
+          echo "URL BASE: $URL"
+          echo "URL DIRETA: $FULL"
           echo "SENHA: $VNC_PASS"
           echo "=============================================="
           {
             echo "### Acesso ao Android 10"
-            echo "URL: $URL/vnc.html?autoconnect=1&resize=scale"
+            echo "URL direta: $FULL"
+            echo ""
             echo "Senha: \`$VNC_PASS\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -65,9 +69,13 @@ jobs:
           arch: x86_64
           force-avd-creation: false
           disable-animations: false
-          # sem -no-window, para o emulador aparecer no display :99
           emulator-options: -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -memory 3072
           script: |
             adb shell getprop ro.build.version.release
-            echo "Emulador no ar por ${{ inputs.minutes }} minutos"
-            sleep $(( ${{ inputs.minutes }} * 60 ))
+
+            # Mantém no ar até 5h55 desde o início do job (limite do GitHub é 6h)
+            DEADLINE=$(( START_TS + 355*60 ))
+            echo "Emulador no ar até $(date -d @$DEADLINE)"
+            while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+              sleep 60
+            done
