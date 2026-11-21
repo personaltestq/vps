@@ -21,42 +21,20 @@ jobs:
         with:
           node-version: 18
 
-      - name: Instalar nginx e ws-scrcpy
+      - name: Instalar e compilar ws-scrcpy
         run: |
           sudo apt-get update
-          sudo apt-get install -y nginx apache2-utils build-essential python3
+          sudo apt-get install -y build-essential python3
           git clone --depth 1 https://github.com/NetrisTV/ws-scrcpy.git "$HOME/ws-scrcpy"
           cd "$HOME/ws-scrcpy"
           npm install
-
-      - name: Login (nginx) na frente do ws-scrcpy
-        run: |
-          PASS=$(openssl rand -hex 6)
-          echo "PASS=$PASS" >> "$GITHUB_ENV"
-          sudo htpasswd -bc /etc/nginx/.htpasswd admin "$PASS"
-          sudo tee /etc/nginx/conf.d/ws.conf > /dev/null <<EOF
-          server {
-            listen 8080;
-            auth_basic "restrito";
-            auth_basic_user_file /etc/nginx/.htpasswd;
-            location / {
-              proxy_pass http://127.0.0.1:8000;
-              proxy_http_version 1.1;
-              proxy_set_header Upgrade \$http_upgrade;
-              proxy_set_header Connection "upgrade";
-              proxy_set_header Host \$host;
-              proxy_read_timeout 86400;
-            }
-          }
-          EOF
-          sudo nginx -t
-          sudo systemctl restart nginx
+          npm run dist
 
       - name: Subir cloudflared e logar acesso
         run: |
           curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared
-          ./cloudflared tunnel --url http://localhost:8080 --no-autoupdate > /tmp/cf.log 2>&1 &
+          ./cloudflared tunnel --url http://localhost:8000 --no-autoupdate > /tmp/cf.log 2>&1 &
 
           URL=""
           for i in $(seq 1 30); do
@@ -67,31 +45,48 @@ jobs:
 
           echo "=============================================="
           echo "URL: $URL"
-          echo "USUARIO: admin"
-          echo "SENHA: $PASS"
           echo "=============================================="
-          {
-            echo "### Acesso ao Android"
-            echo "URL: $URL"
-            echo ""
-            echo "Usuário: \`admin\` | Senha: \`$PASS\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "### Acesso ao Android" >> "$GITHUB_STEP_SUMMARY"
+          echo "URL: $URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ver recursos do runner
+        run: |
+          echo "vCPUs: $(nproc)"
+          free -h
 
       - name: Criar script keep-alive
         run: |
           cat > /tmp/keepalive.sh <<'EOF'
           #!/usr/bin/env bash
-          adb shell getprop ro.build.version.release
+          echo "Android: $(adb shell getprop ro.build.version.release)"
           echo "ABIs: $(adb shell getprop ro.product.cpu.abilist)"
+          echo "native.bridge: $(adb shell getprop ro.dalvik.vm.native.bridge)"
 
           cd "$HOME/ws-scrcpy"
           nohup npm start > /tmp/wsscrcpy.log 2>&1 &
-          sleep 20
-          tail -n 20 /tmp/wsscrcpy.log
+
+          UP=0
+          for i in $(seq 1 90); do
+            if curl -fs -o /dev/null http://127.0.0.1:8000; then
+              UP=1
+              echo "ws-scrcpy no ar na porta 8000"
+              break
+            fi
+            sleep 2
+          done
+          if [ "$UP" != "1" ]; then
+            echo "ERRO: ws-scrcpy NAO subiu. Log:"
+            tail -n 50 /tmp/wsscrcpy.log
+          fi
 
           DEADLINE=$(( START_TS + 355*60 ))
           echo "Emulador no ar até $(date -d @$DEADLINE)"
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            if [ "$UP" = "1" ] && ! curl -fs -o /dev/null http://127.0.0.1:8000; then
+              echo "ws-scrcpy caiu, reiniciando"
+              (cd "$HOME/ws-scrcpy" && nohup npm start > /tmp/wsscrcpy.log 2>&1 &)
+              sleep 60
+            fi
             sleep 30
           done
           echo "Tempo esgotado, encerrando."
@@ -105,7 +100,6 @@ jobs:
           arch: x86_64
           cores: 4
           ram-size: 8192M
-          heap-size: 1024M
           force-avd-creation: false
           disable-animations: true
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -no-metrics -skin 720x1280 -gpu swiftshader_indirect
