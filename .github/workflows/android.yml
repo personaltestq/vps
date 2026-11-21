@@ -1,6 +1,8 @@
 name: Android ARM via ws-scrcpy
+
 on:
   workflow_dispatch:
+
 jobs:
   android:
     runs-on: ubuntu-latest
@@ -9,85 +11,86 @@ jobs:
       - name: Marcar horário de início
         run: echo "START_TS=$(date +%s)" >> "$GITHUB_ENV"
 
-* name: Habilitar KVM
-run: |
-  echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-  sudo udevadm control --reload-rules
-  sudo udevadm trigger --name-match=kvm
-* uses: actions/setup-node@v4
-with:
-  node-version: 18
-* name: Instalar e compilar ws-scrcpy
-run: |
-  sudo apt-get update
-  sudo apt-get install -y build-essential python3
-  git clone --depth 1 https://github.com/NetrisTV/ws-scrcpy.git "$HOME/ws-scrcpy"
-  cd "$HOME/ws-scrcpy"
-  npm install
-  npm run dist
-* name: Subir cloudflared e logar acesso
-run: |
-  curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-  chmod +x cloudflared
-  ./cloudflared tunnel --url http://localhost:8000 --no-autoupdate > /tmp/cf.log 2>&1 &
-  URL=""
-  for i in $(seq 1 30); do
-    URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cf.log | head -n1 || true)
-    [ -n "$URL" ] && break
-    sleep 2
-  done
-  echo "=============================================="
-  echo "URL: $URL"
-  echo "=============================================="
-  echo "### Acesso ao Android" >> "$GITHUB_STEP_SUMMARY"
-  echo "URL: $URL" >> "$GITHUB_STEP_SUMMARY"
-* name: Ver recursos do runner
-run: |
-  echo "vCPUs: $(nproc)"
-  free -h
-* name: Criar script keep-alive
-run: |
-  cat > /tmp/keepalive.sh <<'EOF'
-  #!/usr/bin/env bash
-  echo "Android: $(adb shell getprop ro.build.version.release)"
-  echo "ABIs: $(adb shell getprop ro.product.cpu.abilist)"
-  echo "native.bridge: $(adb shell getprop ro.dalvik.vm.native.bridge)"
-  cd "$HOME/ws-scrcpy"
-  nohup npm start > /tmp/wsscrcpy.log 2>&1 &
-  UP=0
-  for i in $(seq 1 90); do
-    if curl -fs -o /dev/null http://127.0.0.1:8000; then
-      UP=1
-      echo "ws-scrcpy no ar na porta 8000"
-      break
-    fi
-    sleep 2
-  done
-  if [ "$UP" != "1" ]; then
-    echo "ERRO: ws-scrcpy NAO subiu. Log:"
-    tail -n 50 /tmp/wsscrcpy.log
-  fi
-  DEADLINE=$(( START_TS + 355*60 ))
-  echo "Emulador no ar até $(date -d @$DEADLINE)"
-  while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-    if [ "$UP" = "1" ] && ! curl -fs -o /dev/null http://127.0.0.1:8000; then
-      echo "ws-scrcpy caiu, reiniciando"
-      (cd "$HOME/ws-scrcpy" && nohup npm start > /tmp/wsscrcpy.log 2>&1 &)
-      sleep 60
-    fi
-    sleep 30
-  done
-  echo "Tempo esgotado, encerrando."
-  EOF
-  chmod +x /tmp/keepalive.sh
-* uses: reactivecircus/android-emulator-runner@v2
-with:
-  api-level: 33
-  target: google_apis_playstore
-  arch: x86_64
-  cores: 4
-  ram-size: 8192M
-  force-avd-creation: false
-  disable-animations: true
-  emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -no-metrics -skin 720x1280 -gpu swiftshader_indirect
-  script: bash /tmp/keepalive.sh
+      - name: Habilitar KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Instalar e compilar ws-scrcpy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3
+          git clone --depth 1 https://github.com/NetrisTV/ws-scrcpy.git "$HOME/ws-scrcpy"
+          cd "$HOME/ws-scrcpy"
+          npm install
+          npm run dist
+      - name: Subir cloudflared e logar acesso
+        run: |
+          curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          ./cloudflared tunnel --url http://localhost:8000 --no-autoupdate > /tmp/cf.log 2>&1 &
+          URL=""
+          for i in $(seq 1 30); do
+            URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cf.log | head -n1 || true)
+            [ -n "$URL" ] && break
+            sleep 2
+          done
+          echo "=============================================="
+          echo "URL: $URL"
+          echo "=============================================="
+          echo "### Acesso ao Android" >> "$GITHUB_STEP_SUMMARY"
+          echo "URL: $URL" >> "$GITHUB_STEP_SUMMARY"
+      - name: Ver recursos do runner
+        run: |
+          echo "vCPUs: $(nproc)"
+          free -h
+      - name: Criar script keep-alive
+        run: |
+          cat > /tmp/keepalive.sh <<'EOF'
+          #!/usr/bin/env bash
+          echo "Android: $(adb shell getprop ro.build.version.release)"
+          echo "ABIs: $(adb shell getprop ro.product.cpu.abilist)"
+          echo "native.bridge: $(adb shell getprop ro.dalvik.vm.native.bridge)"
+          cd "$HOME/ws-scrcpy"
+          nohup npm start > /tmp/wsscrcpy.log 2>&1 &
+          UP=0
+          for i in $(seq 1 90); do
+            if curl -fs -o /dev/null http://127.0.0.1:8000; then
+              UP=1
+              echo "ws-scrcpy no ar na porta 8000"
+              break
+            fi
+            sleep 2
+          done
+          if [ "$UP" != "1" ]; then
+            echo "ERRO: ws-scrcpy NAO subiu. Log:"
+            tail -n 50 /tmp/wsscrcpy.log
+          fi
+          DEADLINE=$(( START_TS + 355*60 ))
+          echo "Emulador no ar até $(date -d @$DEADLINE)"
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            if [ "$UP" = "1" ] && ! curl -fs -o /dev/null http://127.0.0.1:8000; then
+              echo "ws-scrcpy caiu, reiniciando"
+              (cd "$HOME/ws-scrcpy" && nohup npm start > /tmp/wsscrcpy.log 2>&1 &)
+              sleep 60
+            fi
+            sleep 30
+          done
+          echo "Tempo esgotado, encerrando."
+          EOF
+          chmod +x /tmp/keepalive.sh
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis_playstore
+          arch: x86_64
+          cores: 4
+          ram-size: 8192M
+          force-avd-creation: false
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -no-metrics -skin 720x1280 -gpu swiftshader_indirect
+          script: bash /tmp/keepalive.sh
